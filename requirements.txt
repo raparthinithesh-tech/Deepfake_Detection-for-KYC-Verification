@@ -8,3 +8,4 @@ tqdm
 scikit-learn
 facenet-pytorch>=2.5.3
 streamlit>=1.30.0
+transformers
