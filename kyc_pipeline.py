@@ -24,9 +24,9 @@ class KYCPipeline:
         
         # Load Pretrained Advanced Deepfake Model from HuggingFace if path NOT provided!
         if not df_image_model_path and not df_video_model_path:
-            print("Loading HuggingFace State-Of-The-Art Deepfake Model (dima806)...")
+            print("Loading HuggingFace State-Of-The-Art Deepfake Model (prithivMLmods v2)...")
             # Using a Vision Transformer fine-tuned natively on deepfakes!
-            self.hf_df_pipeline = pipeline("image-classification", model="dima806/deepfake_vs_real_image_detection", device=self.device_id)
+            self.hf_df_pipeline = pipeline("image-classification", model="prithivMLmods/Deep-Fake-Detector-v2-Model", device=self.device_id)
             self.use_hf_for_df = True
         else:
             # Load your Custom Models if you actually trained them with the script
