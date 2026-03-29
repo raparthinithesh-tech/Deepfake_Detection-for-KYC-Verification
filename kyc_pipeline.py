@@ -44,18 +44,11 @@ class KYCPipeline:
 
     def detect_deepfake_image(self, image_pil):
         # image_pil: A PIL Image containing face
-        # Step 1: Crop face cleanly using MTCNN to eliminate background noise accuracy drops
-        # IF MTCNN doesn't find a face, fallback to whole image
-        crop = image_pil
-        boxes, probs = self.mtcnn.detect(image_pil)
-        if boxes is not None and len(boxes) > 0:
-            box = boxes[0]
-            # Convert to int coordinates and crop
-            crop = image_pil.crop((int(box[0]), int(box[1]), int(box[2]), int(box[3])))
-        
         if self.use_hf_for_df:
             # HuggingFace VisionTransformer processing
-            results = self.hf_df_pipeline(crop)
+            # ViTs use self-attention and handle full un-cropped images better.
+            # Scaling tiny MTCNN facial crops to 224x224 introduces bilinear interpolation artifacts that look like Deepfakes!
+            results = self.hf_df_pipeline(image_pil)
             top_pred = results[0]
             label = top_pred['label'].lower()
             score = top_pred['score']
@@ -64,6 +57,16 @@ class KYCPipeline:
             fake_prob = score if status == 'Fake' else (1.0 - score)
             return status, fake_prob
         else:
+            crop = image_pil
+            boxes, probs = self.mtcnn.detect(image_pil)
+            if boxes is not None and len(boxes) > 0:
+                box = boxes[0]
+                # Expand box slightly for context
+                w, h = image_pil.size
+                x1, y1 = max(0, int(box[0])-30), max(0, int(box[1])-30)
+                x2, y2 = min(w, int(box[2])+30), min(h, int(box[3])+30)
+                crop = image_pil.crop((x1, y1, x2, y2))
+                
             img_tensor = self.df_transform(crop).unsqueeze(0).to(self.device)
             with torch.no_grad():
                 output = self.image_df_model(img_tensor)
