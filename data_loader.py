@@ -1,7 +1,7 @@
 import os
 import cv2
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms, datasets
 from PIL import Image
 
@@ -21,24 +21,29 @@ def get_image_transforms(train=True):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
+class DatasetWrapper(Dataset):
+    def __init__(self, subset, transform=None):
+        self.subset = subset
+        self.transform = transform
+        # The parent subset tracks the original dataset, which has target_transform applied
+    def __getitem__(self, index):
+        x, y = self.subset[index]
+        if self.transform:
+            x = self.transform(x)
+        return x, y
+    def __len__(self):
+        return len(self.subset)
+
 class VideoDataset(Dataset):
-    def __init__(self, data_dir, seq_length=10, transform=None):
-        """
-        data_dir: should contain subfolders 'Real' and 'Fake' with videos.
-        seq_length: Number of frames to extract uniformly from a video.
-        """
+    def __init__(self, data_dir, seq_length=10):
         self.data_dir = data_dir
         self.seq_length = seq_length
-        self.transform = transform
-        
         self.videos = []
         self.labels = []
         
-        # Expected Kaggle format usually places videos inside Real and Fake dirs
         if os.path.isdir(os.path.join(data_dir, 'Real')) and os.path.isdir(os.path.join(data_dir, 'Fake')):
             class_map = {'Fake': 1, 'Real': 0}
         else:
-            # Maybe inside lowercase or with train/test splits inside, adjust as needed
             class_map = {'fake': 1, 'real': 0}
             
         for cls_name, label in class_map.items():
@@ -57,8 +62,7 @@ class VideoDataset(Dataset):
         frame_cnt = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if frame_cnt == 0:
              cap.release()
-             # Return empty frames fallback
-             return [torch.zeros(3, 224, 224) for _ in range(self.seq_length)]
+             return [Image.new('RGB', (224, 224)) for _ in range(self.seq_length)]
 
         indices = [int(i * frame_cnt / self.seq_length) for i in range(self.seq_length)]
         frames = []
@@ -68,23 +72,16 @@ class VideoDataset(Dataset):
             ret, frame = cap.read()
             if not ret:
                 break
-            # Convert BGR (OpenCV) to RGB (PIL/Torch)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(frame)
-            
-            if self.transform:
-                frame_tensor = self.transform(pil_img)
-            else:
-                frame_tensor = transforms.ToTensor()(pil_img)
-            frames.append(frame_tensor)
+            frames.append(pil_img)
             
         cap.release()
         
-        # Padding in case video is too short to extract full seq_length frames
         while len(frames) < self.seq_length:
-            frames.append(torch.zeros_like(frames[0]) if len(frames) > 0 else torch.zeros(3, 224, 224))
+            frames.append(frames[-1] if len(frames) > 0 else Image.new('RGB', (224, 224)))
             
-        return torch.stack(frames[:self.seq_length]) # (seq_len, C, H, W)
+        return frames[:self.seq_length]
 
     def __len__(self):
         return len(self.videos)
@@ -92,27 +89,60 @@ class VideoDataset(Dataset):
     def __getitem__(self, idx):
         vid_path = self.videos[idx]
         label = self.labels[idx]
-        
-        frames = self.extract_frames(vid_path)
-        return frames, torch.tensor(label, dtype=torch.float32)
+        return self.extract_frames(vid_path), label
 
-def get_image_dataloader(data_dir, batch_size=32, train=True):
-    # For Kaggle Image datasets containing "Real" and "Fake" folders
-    transform = get_image_transforms(train)
-    dataset = datasets.ImageFolder(root=data_dir, transform=transform)
-    # Ensure Real is 0 and Fake is 1 (Usually datasets.ImageFolder does alphabetical: Fake=0, Real=1)
-    # So we might need to map them manually. By default: 0 -> Fake, 1 -> Real. Let's fix it for KYC standard:
-    # We want Fake=1, Real=0. We'll handle this mapping correctly here.
+class VideoDatasetWrapper(Dataset):
+    def __init__(self, subset, transform=None):
+        self.subset = subset
+        self.transform = transform
+        
+    def __getitem__(self, index):
+        frames, y = self.subset[index]
+        if self.transform:
+            frames = [self.transform(f) for f in frames]
+        else:
+            frames = [transforms.ToTensor()(f) for f in frames]
+        frames_tensor = torch.stack(frames)
+        return frames_tensor, torch.tensor(y, dtype=torch.float32)
+        
+    def __len__(self):
+        return len(self.subset)
+
+def get_image_dataloaders(data_dir, batch_size=32, split_ratio=0.8):
+    # Load entire dataset
+    dataset = datasets.ImageFolder(root=data_dir)
+    
+    # Map Fake -> 1, Real -> 0 standard for KYC
     if dataset.class_to_idx.get('Real') == 1 and dataset.class_to_idx.get('Fake') == 0:
-        dataset.target_transform = lambda y: 1 - y # Reverse 0 to 1, and 1 to 0
+        dataset.target_transform = lambda y: 1 - y
     elif dataset.class_to_idx.get('real') == 1 and dataset.class_to_idx.get('fake') == 0:
         dataset.target_transform = lambda y: 1 - y
         
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=train, num_workers=4)
-    return loader
+    # Split training and testing automatically
+    train_size = int(split_ratio * len(dataset))
+    test_size = len(dataset) - train_size
+    train_subset, test_subset = random_split(dataset, [train_size, test_size])
+    
+    # Wrap subsets to apply individual augmentation correctly!
+    train_ds = DatasetWrapper(train_subset, transform=get_image_transforms(train=True))
+    test_ds = DatasetWrapper(test_subset, transform=get_image_transforms(train=False))
+    
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+    
+    return train_loader, test_loader
 
-def get_video_dataloader(data_dir, seq_length=10, batch_size=8, train=True):
-    transform = get_image_transforms(train)
-    dataset = VideoDataset(data_dir, seq_length=seq_length, transform=transform)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=train, num_workers=4)
-    return loader
+def get_video_dataloaders(data_dir, seq_length=10, batch_size=8, split_ratio=0.8):
+    dataset = VideoDataset(data_dir, seq_length=seq_length)
+    
+    train_size = int(split_ratio * len(dataset))
+    test_size = len(dataset) - train_size
+    train_subset, test_subset = random_split(dataset, [train_size, test_size])
+    
+    train_ds = VideoDatasetWrapper(train_subset, transform=get_image_transforms(train=True))
+    test_ds = VideoDatasetWrapper(test_subset, transform=get_image_transforms(train=False))
+    
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+    
+    return train_loader, test_loader

@@ -2,13 +2,16 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from models import ImageDeepfakeModel, VideoDeepfakeModel
-from data_loader import get_image_dataloader, get_video_dataloader
+from data_loader import get_image_dataloaders, get_video_dataloaders
 from tqdm import tqdm
 import os
+import argparse
 
-def train_model(model, train_loader, val_loader, num_epochs=10, device='cuda', save_path='model.pth'):
+def train_model(model, train_loader, val_loader, num_epochs=25, device='cuda', save_path='model.pth'):
     model = model.to(device)
     criterion = nn.BCEWithLogitsLoss()
+    
+    # User explicitly requested the Adam Optimizer
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     best_acc = 0.0
@@ -39,7 +42,7 @@ def train_model(model, train_loader, val_loader, num_epochs=10, device='cuda', s
 
         train_acc = correct_train / total_train
         
-        # Validation Phase
+        # Testing Phase
         model.eval()
         val_loss = 0.0
         correct_val = 0
@@ -59,35 +62,33 @@ def train_model(model, train_loader, val_loader, num_epochs=10, device='cuda', s
                 total_val += labels.size(0)
 
         val_acc = correct_val / (total_val + 1e-8)
-        print(f"Epoch {epoch+1}: Train Loss={train_loss/total_train:.4f}, Train Acc={train_acc:.4f} | Val Loss={val_loss/total_val:.4f}, Val Acc={val_acc:.4f}")
+        print(f"Epoch {epoch+1}: Train Loss={train_loss/total_train:.4f}, Train Acc={train_acc:.4f} | Test Loss={val_loss/total_val:.4f}, Test Acc={val_acc:.4f}")
 
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save(model.state_dict(), save_path)
-            print(f"Saved Best Model to {save_path}")
+            print(f"Saved Best Model to {save_path} (Test Acc: {best_acc:.4f})")
 
 if __name__ == '__main__':
-    # Determine device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # User needs to set their directories
-    # For example: data_dir = 'dataset/deepfake-and-real-images/train'
-    import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_type', type=str, choices=['image', 'video'], required=True, help="Train on Images or Videos")
-    parser.add_argument('--train_dir', type=str, required=True, help="Path to training data (containing Real/Fake subfolders)")
-    parser.add_argument('--val_dir', type=str, required=True, help="Path to validation data")
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--data_dir', type=str, required=True, help="Path to kaggle data (containing Real and Fake subfolders)")
+    parser.add_argument('--split_ratio', type=float, default=0.8, help="Ratio to split dataset into training vs testing (e.g. 0.8 for 80/20)")
+    parser.add_argument('--epochs', type=int, default=25, help="Number of epochs to train (requested >20)")
     args = parser.parse_args()
 
+    # Automatically split Kaggle folders into PyTorch Training and Testing sets
     if args.dataset_type == 'image':
-        train_loader = get_image_dataloader(args.train_dir, batch_size=32, train=True)
-        val_loader = get_image_dataloader(args.val_dir, batch_size=32, train=False)
+        print(f"Loading Image Dataset and applying {args.split_ratio*100:.0f}% Train / {(1-args.split_ratio)*100:.0f}% Test split...")
+        train_loader, test_loader = get_image_dataloaders(args.data_dir, batch_size=32, split_ratio=args.split_ratio)
         model = ImageDeepfakeModel(model_name='efficientnet_b4')
-        train_model(model, train_loader, val_loader, num_epochs=args.epochs, device=device, save_path='deepfake_image_model.pth')
+        train_model(model, train_loader, test_loader, num_epochs=args.epochs, device=device, save_path='deepfake_image_model.pth')
+    
     else:
-        train_loader = get_video_dataloader(args.train_dir, batch_size=8, train=True)
-        val_loader = get_video_dataloader(args.val_dir, batch_size=8, train=False)
+        print(f"Loading Video Dataset and applying {args.split_ratio*100:.0f}% Train / {(1-args.split_ratio)*100:.0f}% Test split...")
+        train_loader, test_loader = get_video_dataloaders(args.data_dir, seq_length=10, batch_size=8, split_ratio=args.split_ratio)
         model = VideoDeepfakeModel(model_name='efficientnet_b0')
-        train_model(model, train_loader, val_loader, num_epochs=args.epochs, device=device, save_path='deepfake_video_model.pth')
+        train_model(model, train_loader, test_loader, num_epochs=args.epochs, device=device, save_path='deepfake_video_model.pth')
