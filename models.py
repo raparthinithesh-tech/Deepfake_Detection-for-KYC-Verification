@@ -1,62 +1,48 @@
 import torch
 import torch.nn as nn
-import timm
+from torchvision import models
 
 class ImageDeepfakeModel(nn.Module):
-    def __init__(self, model_name='efficientnet_b4', pretrained=True, num_classes=1):
+    def __init__(self):
         super(ImageDeepfakeModel, self).__init__()
-        # Using a powerful vision model like EfficientNet for deepfake detection
-        self.encoder = timm.create_model(model_name, pretrained=pretrained, num_classes=0)
-        self.fc = nn.Linear(self.encoder.num_features, num_classes)
+        # Architecture explicitly requested by User's Kaggle Jupyter Notebook
+        self.model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        self.model.fc = nn.Linear(self.model.fc.in_features, 2) # Output layer for 2 classes (0: Real, 1: Fake)
         
     def forward(self, x):
-        features = self.encoder(x)
-        out = self.fc(features)
-        return out
-
+        return self.model(x)
 
 class VideoDeepfakeModel(nn.Module):
-    def __init__(self, model_name='efficientnet_b0', pretrained=True, hidden_dim=256, num_layers=1, num_classes=1):
+    def __init__(self, hidden_dim=256, num_layers=1):
         super(VideoDeepfakeModel, self).__init__()
         
-        # Frame Feature Extractor
-        self.encoder = timm.create_model(model_name, pretrained=pretrained, num_classes=0)
+        # Video Frame Extractor matching Image ResNet18 backbone
+        self.encoder = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        # Strip final FC layer to get raw features (size 512)
+        self.encoder.fc = nn.Identity()
         
         # LSTM for temporal dynamics analysis (sequence of frames)
         self.lstm = nn.LSTM(
-            input_size=self.encoder.num_features,
+            input_size=512,
             hidden_size=hidden_dim,
             num_layers=num_layers,
             batch_first=True,
             bidirectional=False
         )
         
-        self.fc = nn.Linear(hidden_dim, num_classes)
+        self.fc = nn.Linear(hidden_dim, 2)
         
     def forward(self, x):
         # x shape: (Batch, Seq_Length, C, H, W)
         batch_size, seq_len, c, h, w = x.size()
         
-        # Reshape to process frames through encoder
         x = x.view(batch_size * seq_len, c, h, w)
         features = self.encoder(x)
         
-        # Reshape back to sequences
         features = features.view(batch_size, seq_len, -1)
-        
-        # Pass sequence to LSTM
         lstm_out, _ = self.lstm(features)
         
-        # Take the output of the last sequential frame
         last_out = lstm_out[:, -1, :]
         out = self.fc(last_out)
         
         return out
-
-if __name__ == '__main__':
-    # Test instantiating the models
-    img_model = ImageDeepfakeModel()
-    print("Image Model Created. Number of parameters:", sum(p.numel() for p in img_model.parameters()))
-
-    vid_model = VideoDeepfakeModel()
-    print("Video Model Created. Number of parameters:", sum(p.numel() for p in vid_model.parameters()))
