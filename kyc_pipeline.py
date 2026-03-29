@@ -112,7 +112,7 @@ class KYCPipeline:
             df_status, p = self.detect_deepfake_image(live_image)
             
             if df_status == 'Fake':
-                return f"KYC Failed! Live image is a deepfake. ({p*100:.2f}% Fake)"
+                return "KYC Failed! Live image is a deepfake."
 
             print("Checking Face Match...")
             live_embedding = self.extract_face_embeddings(live_image)
@@ -122,7 +122,7 @@ class KYCPipeline:
             df_status, p = self.detect_deepfake_video(live_video_path)
 
             if df_status == 'Fake':
-                return f"KYC Failed! Live video is a deepfake sequence. ({p*100:.2f}% Fake)"
+                return "KYC Failed! Live video is a deepfake sequence."
             
             cap = cv2.VideoCapture(live_video_path)
             ret, frame = cap.read()

@@ -51,9 +51,9 @@ elif option == "Image Deepfake":
             with st.spinner("Analyzing artifacts for deepfakes..."):
                 status, prob = kyc.detect_deepfake_image(image)
                 if status == 'Real':
-                    st.success(f"Result: {status} (Fake Probability: {prob*100:.2f}%)")
+                    st.success(f"Result: {status}")
                 else:
-                    st.error(f"Result: {status} (Fake Probability: {prob*100:.2f}%)")
+                    st.error(f"Result: {status}")
 
 elif option == "Video Deepfake":
     st.title("Video Deepfake Detection")
@@ -73,9 +73,9 @@ elif option == "Video Deepfake":
                 try:
                     status, prob = kyc.detect_deepfake_video(tmp_vid_path)
                     if status == 'Real':
-                        st.success(f"Result: {status} (Fake Probability: {prob*100:.2f}%)")
+                        st.success(f"Result: {status}")
                     else:
-                        st.error(f"Result: {status} (Fake Probability: {prob*100:.2f}%)")
+                        st.error(f"Result: {status}")
                 finally:
                     os.remove(tmp_vid_path)
 
