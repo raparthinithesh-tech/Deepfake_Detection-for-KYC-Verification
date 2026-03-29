@@ -23,14 +23,27 @@ class KYCPipeline:
         self.image_df_model = ImageDeepfakeModel().to(self.device)
         if df_image_model_path and os.path.exists(df_image_model_path):
             print(f"Loading custom weights from {df_image_model_path}!")
-            self.image_df_model.load_state_dict(torch.load(df_image_model_path, map_location=self.device))
+            state_dict = torch.load(df_image_model_path, map_location=self.device)
+            
+            # The Kaggle notebook saved the weights directly from the ResNet18 instance.
+            # Our custom ImageDeepfakeModel class wraps ResNet18 inside 'self.model'.
+            # Thus, we load the state_dict explicitly into self.image_df_model.model !
+            if 'model_state_dict' in state_dict:
+                state_dict = state_dict['model_state_dict']
+                
+            try:
+                self.image_df_model.model.load_state_dict(state_dict)
+            except RuntimeError:
+                # Fallback if the user actually trained the wrapped ImageDeepfakeModel via train.py
+                self.image_df_model.load_state_dict(state_dict, strict=False)
         else:
             print("WARNING: Custom weights not found. Dashboard will run with randomly initialized ResNet18 until you provide the .pth file!")
         self.image_df_model.eval()
 
         self.video_df_model = VideoDeepfakeModel().to(self.device)
         if df_video_model_path and os.path.exists(df_video_model_path):
-            self.video_df_model.load_state_dict(torch.load(df_video_model_path, map_location=self.device))
+            state_dict = torch.load(df_video_model_path, map_location=self.device)
+            self.video_df_model.load_state_dict(state_dict, strict=False)
         self.video_df_model.eval()
 
     def detect_deepfake_image(self, image_pil):
