@@ -45,10 +45,26 @@ class KYCPipeline:
     def detect_deepfake_image(self, image_pil):
         # image_pil: A PIL Image containing face
         if self.use_hf_for_df:
-            # HuggingFace VisionTransformer processing
-            # ViTs use self-attention and handle full un-cropped images better.
-            # Scaling tiny MTCNN facial crops to 224x224 introduces bilinear interpolation artifacts that look like Deepfakes!
-            results = self.hf_df_pipeline(image_pil)
+            # High-accuracy Deepfake Liveness networks are incredibly sensitive to digital composites.
+            # Things like black structural borders, polaroid effects, scanned edges, and studio watermarks
+            # will INSTANTLY be recognized as "synthetic overlays" and flagged 99% Fake.
+            # We use an MTCNN smart-crop with a generous 1.5x margin to remove those borders and watermarks before analysis!
+            smart_crop = image_pil
+            boxes, probs = self.mtcnn.detect(image_pil)
+            if boxes is not None and len(boxes) > 0:
+                box = boxes[0]
+                w_face, h_face = box[2] - box[0], box[3] - box[1]
+                margin_x, margin_y = w_face * 1.2, h_face * 1.5  # Large context margin stops scaling artifacts
+                w, h = image_pil.size
+                
+                # Expand box and clamp to image bounds
+                x1 = max(0, int(box[0] - margin_x))
+                y1 = max(0, int(box[1] - margin_y))
+                x2 = min(w, int(box[2] + margin_x))
+                y2 = min(h, int(box[3] + margin_y))
+                smart_crop = image_pil.crop((x1, y1, x2, y2))
+
+            results = self.hf_df_pipeline(smart_crop)
             top_pred = results[0]
             label = top_pred['label'].lower()
             score = top_pred['score']
